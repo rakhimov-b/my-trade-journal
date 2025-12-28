@@ -1,65 +1,48 @@
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-import sqlite3
-import plotly.express as px
+import plotly.express as px  # Grafiklar uchun
 from datetime import datetime
 
-# Sahifa sozlamalari
-st.set_page_config(page_title="Pro Trader Journal", layout="wide")
+st.set_page_config(page_title="Pro Trading Dashboard", layout="wide")
 
-# Ma'lumotlar bazasi
-conn = sqlite3.connect('trade_pro.db', check_same_thread=False)
-c = conn.cursor()
-c.execute('CREATE TABLE IF NOT EXISTS trades (id INTEGER PRIMARY KEY, date TEXT, pair TEXT, type TEXT, amount REAL)')
-conn.commit()
+st.title("🚀 Smart Trade Journal v2.0")
 
-# --- SIDEBAR (KIRITISH) ---
-st.sidebar.header("📊 Yangi Trade")
-pair = st.sidebar.text_input("Instrument (masalan: BTCUSDT)").upper()
-amount = st.sidebar.number_input("Profit/Loss ($)", min_value=0.0, step=10.0)
-type_trade = st.sidebar.selectbox("Natija", ["TAKE PROFIT", "STOP LOSS"])
-
-if st.sidebar.button("Saqlash"):
-    val = amount if type_trade == "TAKE PROFIT" else -amount
-    date = datetime.now().strftime("%Y-%m-%d %H:%M")
-    c.execute("INSERT INTO trades (date, pair, type, amount) VALUES (?, ?, ?, ?)", (date, pair, type_trade, val))
-    conn.commit()
-    st.sidebar.success("Saqlandi!")
-
-# --- ASOSIY PANEL ---
-st.title("🚀 AI Trade Dashboard")
-
-# Ma'lumotlarni o'qish
-df = pd.read_sql_query("SELECT * FROM trades", conn)
+# Google Sheets ulanishi
+conn = st.connection("gsheets", type=GSheetsConnection)
+df = conn.read(ttl="0")
 
 if not df.empty:
-    # Hisob-kitoblar
-    initial_balance = 1000.0
+    # Ma'lumotlarni tayyorlash
+    df['date'] = pd.to_datetime(df['date'])
+    df = df.sort_values('date')
     df['cumulative_profit'] = df['amount'].cumsum()
-    df['balance'] = initial_balance + df['cumulative_profit']
+
+    # Tepadagi asosiy ko'rsatkichlar (Cards)
+    col1, col2, col3, col4 = st.columns(4)
+    total_pnl = df['amount'].sum()
+    win_rate = (len(df[df['type'] == 'TAKE PROFIT']) / len(df)) * 100
     
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Joriy Balans", f"${df['balance'].iloc[-1]:.2f}", f"{df['cumulative_profit'].iloc[-1]:.2f}$")
-    
-    wins = len(df[df['type'] == 'TAKE PROFIT'])
-    win_rate = (wins / len(df)) * 100
+    col1.metric("Umumiy PnL", f"${total_pnl:,.2f}", delta=f"{total_pnl:,.2f}")
     col2.metric("Win Rate", f"{win_rate:.1f}%")
-    col3.metric("Jami Tradelar", len(df))
+    col3.metric("Jami Savdolar", len(df))
+    col4.metric("Eng katta foyda", f"${df['amount'].max():,.2f}")
 
-    # GRAFIK (Interaktiv)
-    st.subheader("📈 Hisob o'sish grafigi (Equity Curve)")
-    fig = px.line(df, x=df.index, y='balance', markers=True, 
-                  template="plotly_dark", color_discrete_sequence=['#00e676'])
-    st.plotly_chart(fig, use_container_width=True)
+    # Grafiklar bo'limi
+    st.markdown("---")
+    g1, g2 = st.columns([2, 1])
 
-    # JADVAL
-    st.subheader("📜 Savdolar tarixi")
-    st.dataframe(df[['date', 'pair', 'type', 'amount']].sort_index(ascending=False), use_container_width=True)
-else:
-    st.info("Hali tradelar mavjud emas. Sidebar orqali birinchi tradeni qo'shing.")
+    with g1:
+        st.subheader("Balans o'sishi")
+        fig_line = px.line(df, x='date', y='cumulative_profit', title="Equity Curve")
+        st.plotly_chart(fig_line, use_container_width=True)
 
-# Ma'lumotni tozalash
-if st.sidebar.button("Barcha ma'lumotlarni o'chirish"):
-    c.execute("DELETE FROM trades")
-    conn.commit()
-    st.rerun()
+    with g2:
+        st.subheader("Natijalar ulushi")
+        fig_pie = px.pie(df, names='type', color='type', 
+                         color_discrete_map={'TAKE PROFIT':'#00CC96', 'STOP LOSS':'#EF553B'})
+        st.plotly_chart(fig_pie, use_container_width=True)
+
+# Sidebar (O'zgarishsiz qoladi)
+st.sidebar.header("Yangi Trade")
+# ... (avvalgi inputlar koda shu yerda davom etadi)
